@@ -252,8 +252,20 @@
 // .bss alongside the firmware. Every other device keeps the static DRAM array.
 // (The prebuilt Arduino-ESP32 libs disable BSS-in-PSRAM, so this is a runtime
 // heap allocation, not EXT_RAM_BSS_ATTR.)
+//
+// Also on for the X4 Pro, for a different reason. Its internal DRAM is not
+// tight — one 48KB framebuffer fits comfortably — but a consumer that leaves
+// EINK_DISPLAY_SINGLE_BUFFER_MODE undefined gets two of them plus a
+// framebuffer-sized async shadow, and paying ~144KB of a ~260KB internal heap
+// for that would leave nothing for EPUB decoding. The second buffer is what
+// makes a previous-frame baseline available, which is what a windowed
+// (damage-rectangle) refresh diffs against; with a single buffer
+// FreeInkDisplay::displayWindow is handed prev = nullptr and can only re-seed.
+// So on this device PSRAM buys multi-buffering rather than mere capacity.
+// allocFrameBufferStorage() still falls back to internal malloc if the PSRAM
+// allocation fails, and -DFREEINK_FB_PSRAM=0 turns it off outright.
 #ifndef FREEINK_FB_PSRAM
-#define FREEINK_FB_PSRAM (FREEINK_DEVICE_M5PAPER)
+#define FREEINK_FB_PSRAM (FREEINK_DEVICE_M5PAPER || FREEINK_DEVICE_X4PRO)
 #endif
 
 // SD transport. de-link (4-bit) and X4 Pro (1-bit) are wired for SDMMC; SdFat
