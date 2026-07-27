@@ -153,6 +153,10 @@ PanelGeometry Ssd1677Driver::geometry() const { return {_w, _h, _wb, _bufferSize
 void Ssd1677Driver::begin(EpdBus& bus) {
   bus.reset();
   initController(bus);
+  // The board's threshold, and a clean slate: begin() follows boot or a
+  // deep-sleep wake, and the first paint after either is a full clear.
+  _ghost.setInterval(_cfg.ghostClearInterval);
+  _ghost.reset();
 }
 
 void Ssd1677Driver::initController(EpdBus& bus) {
@@ -377,8 +381,24 @@ void Ssd1677Driver::displayImpl(EpdBus& bus, const uint8_t* fb, const uint8_t* p
       // boards skip this — their fast sequence self-powers, so _isScreenOn is false
       // every page and forcing HALF would make every page a slow full-waveform flash.
       mode = RefreshMode::Half;
+    } else if (mode == RefreshMode::Fast && _ghost.wouldClear(true, true)) {
+      // Ghost budget. A run of differential FAST refreshes leaves residue that
+      // accumulates until the panel visibly greys; promoting one in every
+      // ghostClearInterval erases it with no firmware involvement, the same way
+      // the IT8951 driver does.
+      //
+      // Promotes to the same clean the branches above use — HALF where the board
+      // publishes one, else FULL — rather than inventing a third path.
+      //
+      // panelRunning is passed true because the wake case is already handled by
+      // _needsInitialFull above; this branch only ever sees a running panel.
+      mode = (_cfg.halfSeqOverride != 0) ? RefreshMode::Half : RefreshMode::Full;
     }
   }
+  // Record against the mode actually chosen, not the one requested: a FAST that
+  // was promoted for any of the reasons above really did clean the panel, so it
+  // must reset the budget too.
+  _ghost.recordRefresh(mode != RefreshMode::Fast);
 
   // Leaving grayscale content without the firmware's cleanup: stock parity — the
   // OEM firmware has NO revert waveform (its grayscale sequence just resyncs RED
