@@ -11,6 +11,7 @@
 // Ssd1677Config. A board reuses the generic driver by passing its own config;
 // the firmware just calls the generic EInkDisplay API and gets device behavior.
 
+#include "../GhostBudget.h"
 #include "PanelDriver.h"
 
 namespace freeink {
@@ -45,6 +46,12 @@ struct Ssd1677Config {
   // grayscale LUT that drives the border black on every AA refresh. 0x80 (VCOM)
   // holds it undriven at a defined potential. 0 = leave the register untouched.
   uint8_t borderWaveformGray = 0;
+  // Promote one differential FAST refresh in every N to a clean, so partial-update
+  // residue cannot accumulate without bound. 0 disables it, which is the default
+  // for every board: the right threshold is a property of the panel and has to be
+  // measured on it, and shipping a guess would change refresh behaviour on the X4,
+  // Sticky and de-link as much as on the X4 Pro. See GhostBudget.
+  uint16_t ghostClearInterval = 0;
   // Power the rails up in a separate activation before a custom-LUT (grayscale/
   // revert) refresh. Boards whose vendor sequences self-power-down after every
   // refresh (Sticky: fast 0xFF) otherwise fold CLOCK_ON|ANALOG_ON into the same
@@ -127,6 +134,9 @@ class Ssd1677Driver : public PanelDriver {
   // a clean differential baseline. Only armed for boards whose self-powering fast
   // sequence makes _isScreenOn useless as a cold-start signal (fullSeqOverride set).
   bool _needsInitialFull = false;
+  // Counts differential refreshes since the last clean. Inert while
+  // _cfg.ghostClearInterval is 0.
+  GhostBudget _ghost{0};
 };
 
 // Singleton accessor (Meyers, zero-heap). Selects the config for the active board.
