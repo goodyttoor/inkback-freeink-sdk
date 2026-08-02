@@ -1,5 +1,7 @@
 #include "Uc8279Driver.h"
 
+#include "Uc8279Resolution.h"
+
 #include <BoardConfig.h>
 
 namespace freeink {
@@ -64,16 +66,26 @@ void Uc8279Driver::initController(EpdBus& bus) {
   bus.cmd(CMD_PANEL_SETTING);
   bus.data(_cfg.psr0);
   bus.data(_cfg.psr1);
-  // TRES 792x528. Byte layout per datasheet: HRES[9:8], HRES[7:3] (low 3 bits
-  // zero — horizontal resolution is 8-pixel granular), VRES[9:8], VRES[7:0].
+  // TRES from the ACTIVE panel, not from literals.
+  //
+  // This was four hardcoded bytes meaning 792x528 — the X3 panel this driver was
+  // written for — while _w/_h/_wb and every buffer below already came from
+  // BoardConfig. The controller was therefore told a fixed geometry regardless
+  // of the panel attached, and beta 9 puts this same controller on the X4 Pro at
+  // 800x480. The failure mode is a shifted or compressed image, not an error.
+  //
+  // uc8279Resolution() returns byte-identical output for 792x528, so X3
+  // behaviour is unchanged; see Uc8279ResolutionTest for that pin.
+  //
   // NOTE (hardware validation): the UC8253 X3 init programs VRES=600 (the OEM
   // scans the full gate count with 528 rows bonded); if the UC8279 panel shows
   // a vertical offset or compressed image, try 0x02/0x58 here instead.
+  const freeink::Uc8279Resolution tres = freeink::uc8279Resolution(_w, _h);
   bus.cmd(CMD_RESOLUTION);
-  bus.data(0x03);
-  bus.data(0x18);
-  bus.data(0x02);
-  bus.data(0x10);
+  bus.data(tres.hresHigh);
+  bus.data(tres.hresLow);
+  bus.data(tres.vresHigh);
+  bus.data(tres.vresLow);
   bus.cmd(CMD_GATE_SOURCE_START);
   bus.data(0x00);
   bus.data(0x00);

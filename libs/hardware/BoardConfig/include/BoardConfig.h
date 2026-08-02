@@ -103,7 +103,12 @@
 // Which controller a given unit runs is resolved at boot (OEM hw_calib/screenType
 // in NVS first, then a display-bus probe) and the matching driver is selected
 // before display begin(). Link each driver wherever a batch might carry it.
-#if FREEINK_DEVICE_X3
+// X4 Pro too, not only X3. CrossPoint beta 9 documents a UC8279 at 800x480 on
+// X4 Pro batches, discriminated from the UC8179 by LUT_VER. Linking it only for
+// X3 meant an X4 Pro carrying that controller had no driver to select at all —
+// it would fall through to UC8179 or SSD1677 and run the wrong bring-up, which
+// is a panel that never paints rather than an error anyone can read.
+#if FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
 #define FREEINK_DRIVER_UC8279 1
 #else
 #define FREEINK_DRIVER_UC8279 0

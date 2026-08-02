@@ -133,6 +133,18 @@ void FreeInkDisplay::selectDriver() {
 #endif
     case PanelSel::X4:
     default:
+      // Three controllers share this panel selection, not two. Newer batches
+      // swap the SSD1677 for an UltraChip part, and beta 9 established that the
+      // part can be either a UC8179 or a UC8279 at 800x480 — LUT_VER is what
+      // tells them apart. Check the more specific one first: both are UC81xx KW
+      // family, but their power/LUT bring-up differs, so selecting the wrong one
+      // leaves the panel dark.
+#if FREEINK_DRIVER_UC8279
+      if (BoardConfig::ACTIVE.displayController == BoardConfig::DisplayController::UC8279) {
+        _driver = &uc8279Driver();
+        break;
+      }
+#endif
 #if FREEINK_DRIVER_UC8179
       // Newer X4 / X4 Pro batches swap the SSD1677 for an UltraChip UC8179.
       // Which silicon a unit carries is decided before begin() by the boot-time
