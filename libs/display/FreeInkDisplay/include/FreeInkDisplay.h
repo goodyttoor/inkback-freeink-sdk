@@ -143,6 +143,14 @@ class FreeInkDisplay {
   // can skip overlap scaffolding (e.g. whole-plane grayscale buffers) when
   // there is nothing to overlap.
   bool supportsAsyncRefresh() const;
+  // True when displayWindow() will refresh ONLY the requested rectangle. False
+  // means the call still paints correctly, but repaints the whole panel — so
+  // any timing or power saving attributed to the window is imaginary.
+  //
+  // Mirrors supportsAsyncRefresh() including the inversion guards, and for the
+  // same reason: a windowed diff would need an inverted controller baseline
+  // for just that region, so displayWindow() falls back while inversion is on.
+  bool supportsWindowedRefresh() const;
 
   // ------------------------------------------------------------------------
   // CrossPoint EInkDisplay compatibility surface.

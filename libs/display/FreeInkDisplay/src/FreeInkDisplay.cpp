@@ -490,6 +490,13 @@ bool FreeInkDisplay::supportsAsyncRefresh() const {
   return !_inverted && !_inversionDirty && _driver != nullptr && _driver->supportsAsyncDisplay();
 }
 
+bool FreeInkDisplay::supportsWindowedRefresh() const {
+  // The inversion terms are not copied from supportsAsyncRefresh() out of
+  // symmetry — they are the same two states displayWindow() itself bails on
+  // just below. Both predicates must move together or this starts lying.
+  return !_inverted && !_inversionDirty && _driver != nullptr && _driver->supportsWindowedDisplay();
+}
+
 bool FreeInkDisplay::refreshBusy() {
   // Does NOT clear the pending state on completion: the driver's post-waveform
   // work (X3 DTM1 sync) must run through displayFinish(). When this returns

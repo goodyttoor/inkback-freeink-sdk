@@ -88,6 +88,10 @@ class Ssd1677Driver : public PanelDriver {
   bool supportsAsyncDisplay() const override { return true; }
   void displayWindow(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, uint16_t x, uint16_t y, uint16_t w,
                      uint16_t h, bool turnOff) override;
+  // The only driver that honours a window today. UC8179 and UC8279 inherit the
+  // full-panel default in PanelDriver and must keep answering false until they
+  // implement one.
+  bool supportsWindowedDisplay() const override { return true; }
 
   void seedPreviousFrame(EpdBus& bus, const uint8_t* buf) override;
 
