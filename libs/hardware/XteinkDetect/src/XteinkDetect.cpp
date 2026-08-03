@@ -237,6 +237,9 @@ namespace {
 DisplayProbeRecord g_lastProbe;
 }  // namespace
 
+// The recovered mapping. Kept beside nothing else on purpose: it is a table of
+// magic numbers and its whole defence is the host test that pins it.
+
 const DisplayProbeRecord& lastDisplayProbe() { return g_lastProbe; }
 
 bool applyXteinkDisplayController() {
@@ -299,17 +302,16 @@ bool applyXteinkDisplayController() {
       // See docs/inkback/reference/crosspoint-x4pro-beta10.md for the full
       // derivation, including the one instruction that would not decode.
       const uint8_t lutMsb = static_cast<uint8_t>((lutVer >> 16) & 0xFF);
-      const bool knownUc8279 = (lutMsb == 0x69) || (lutMsb == 0x68) || (lutMsb == 0x02);
-      const bool knownUc8179 = (lutMsb == 0x01);
+      const UltraChipSibling sibling = siblingFromLutVer(lutMsb);
 
-      if (knownUc8279 || knownUc8179) {
-        const bool uc8279 = knownUc8279;
+      if (sibling != UltraChipSibling::Unrecognised) {
+        const bool uc8279 = sibling == UltraChipSibling::Uc8279;
         BoardConfig::ACTIVE.displayController =
             uc8279 ? BoardConfig::DisplayController::UC8279 : BoardConfig::DisplayController::UC8179;
         if (Serial)
           Serial.printf("[%lu] [XTDET] promoted SSD1677 -> %s (LUT_VER=%02X%s)\n", millis(),
                         uc8279 ? "UC8279 800x480" : "UC8179", lutMsb,
-                        (lutMsb == 0x69 || lutMsb == 0x01) ? "" : ", reserved");
+                        reservedLutVer(lutMsb) ? ", reserved" : "");
         return true;
       }
 

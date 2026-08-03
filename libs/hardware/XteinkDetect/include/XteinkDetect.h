@@ -75,6 +75,44 @@ enum class DisplayControllerVerdict : uint8_t { PrimaryAssumed, Uc81xxConfirmed,
 
 DisplayControllerVerdict detectXteinkDisplayController(uint8_t verBytes[5] = nullptr, uint8_t* flg = nullptr);
 
+// Which UltraChip sibling an X4 Pro carries, from LUT_VER's most significant
+// byte (VER[2]).
+//
+// PURE, and separated from the promotion for one reason: these four values were
+// recovered by disassembling CrossPoint beta 10, not read from a datasheet, and
+// one of them is inferred rather than decoded. Constants like that need a test
+// standing over them, and a function that touches BoardConfig and Serial cannot
+// have one. See docs/inkback/reference/crosspoint-x4pro-beta10.md.
+//
+//   0x01              -> UC8179
+//   0x02, 0x68, 0x69  -> UC8279 800x480
+//   anything else     -> Unrecognised, and the caller falls back
+//
+// Beta 10 logs 0x02 and 0x68 with a ", reserved" caveat — promoted, but not the
+// value it expects — which reservedLutVer() reports so our log can say the same.
+enum class UltraChipSibling : uint8_t { Uc8179, Uc8279, Unrecognised };
+
+// Defined inline: pure arithmetic over one byte, and this way the host test
+// that pins the table needs no translation unit and no Arduino.
+inline UltraChipSibling siblingFromLutVer(const uint8_t lutVerMsb) {
+  // 0x68 is the ONE inferred entry. Beta 10's range test reads
+  // (uint8_t)(v - 0x68) <= 1, but the instruction that performs the comparison
+  // does not decode under xtensa-esp-elf-objdump, so this value rests on the
+  // surrounding idiom rather than on an opcode. Treated as promoting because
+  // that is what the idiom says; flagged reserved because beta 10 flags it.
+  if (lutVerMsb == 0x69 || lutVerMsb == 0x68 || lutVerMsb == 0x02) return UltraChipSibling::Uc8279;
+  if (lutVerMsb == 0x01) return UltraChipSibling::Uc8179;
+  return UltraChipSibling::Unrecognised;
+}
+
+// True when the byte promotes but is not the value upstream treats as canonical
+// (0x69 for UC8279, 0x01 for UC8179). False for unrecognised bytes too — there
+// is nothing to caveat about a value that decided nothing.
+inline bool reservedLutVer(const uint8_t lutVerMsb) {
+  if (siblingFromLutVer(lutVerMsb) == UltraChipSibling::Unrecognised) return false;
+  return lutVerMsb != 0x69 && lutVerMsb != 0x01;
+}
+
 // Convenience: resolve which panel controller this unit carries and, when it is
 // the UltraChip sibling, promote BoardConfig::ACTIVE.displayController to it
 // (SSD1677 -> UC8179, UC8253 -> UC8279) so FreeInkDisplay::begin() selects the
