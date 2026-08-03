@@ -208,10 +208,14 @@ bool screenTypeIsUltraChip(uint8_t st) { return st == 1 || st == 2 || st == 0x0B
 // it: the values that discriminate the two are not documented anywhere we can
 // verify, and inventing a threshold would be a guess wearing a constant's
 // clothes. Once a real unit prints one, this is where the comparison goes.
-bool probeSaysUltraChip(uint32_t* lutVer = nullptr) {
+bool probeSaysUltraChip(uint32_t* lutVer = nullptr, DisplayProbeRecord* record = nullptr) {
   uint8_t ver[5] = {0};
   uint8_t flg = 0;
   const DisplayControllerVerdict v = detectXteinkDisplayController(ver, &flg);
+  if (record != nullptr) {
+    memcpy(record->ver, ver, sizeof(ver));
+    record->flg = flg;
+  }
   if (Serial)
     Serial.printf("[%lu] [XTDET] bus probe VER=%02X %02X %02X %02X %02X FLG=%02X -> %s\n", millis(), ver[0], ver[1],
                   ver[2], ver[3], ver[4], flg,
@@ -228,6 +232,13 @@ bool probeSaysUltraChip(uint32_t* lutVer = nullptr) {
 
 }  // namespace
 
+namespace {
+// Written once, by the boot probe. See the header for why nothing re-probes.
+DisplayProbeRecord g_lastProbe;
+}  // namespace
+
+const DisplayProbeRecord& lastDisplayProbe() { return g_lastProbe; }
+
 bool applyXteinkDisplayController() {
   // Decide from the live display-bus probe — the ground truth. The OEM NVS
   // hw_calib/screenType is read only for diagnostics: it's unreliable in the
@@ -235,7 +246,10 @@ bool applyXteinkDisplayController() {
   // panel). Log it — and flag when it disagrees with the probe — but never
   // decide on it.
   uint8_t screenType = 0;
+  g_lastProbe = DisplayProbeRecord{};
   if (readOemScreenType(&screenType)) {
+    g_lastProbe.screenTypeKnown = true;
+    g_lastProbe.screenType = screenType;
     if (Serial)
       Serial.printf("[%lu] [XTDET] NVS hw_calib/screenType=%u (%s) [info only]\n", millis(), screenType,
                     screenTypeIsUltraChip(screenType) ? "UltraChip" : "default");
@@ -244,7 +258,10 @@ bool applyXteinkDisplayController() {
   }
 
   uint32_t lutVer = 0;
-  const bool ultraChip = probeSaysUltraChip(&lutVer);
+  const bool ultraChip = probeSaysUltraChip(&lutVer, &g_lastProbe);
+  g_lastProbe.lutVer = lutVer;
+  g_lastProbe.ultraChip = ultraChip;
+  g_lastProbe.valid = true;
   if (!ultraChip) return false;
   if (Serial) Serial.printf("[%lu] [XTDET] LUT_VER=%06lX\n", millis(), static_cast<unsigned long>(lutVer));
 
@@ -305,6 +322,11 @@ DisplayControllerVerdict detectXteinkDisplayController(uint8_t verBytes[5], uint
   return DisplayControllerVerdict::PrimaryAssumed;
 }
 bool applyXteinkDisplayController() { return false; }
+
+namespace {
+DisplayProbeRecord g_lastProbeStub;
+}  // namespace
+const DisplayProbeRecord& lastDisplayProbe() { return g_lastProbeStub; }
 
 #endif  // FREEINK_XTEINK_DISPLAY_PROBE
 

@@ -89,6 +89,34 @@ DisplayControllerVerdict detectXteinkDisplayController(uint8_t verBytes[5] = nul
 // builds without a probe-capable profile this is a no-op returning false.
 bool applyXteinkDisplayController();
 
+// What the boot-time probe actually saw, kept so a diagnostic screen can report
+// it WITHOUT probing again.
+//
+// Re-probing at runtime is not an option: detectXteinkDisplayController()
+// pulses the panel's reset line before bit-banging the read, which is safe
+// before FreeInkDisplay::begin() and decidedly not after it — doing it late
+// re-resets the panel mid-session and has frozen an X3 in the field. So the one
+// legitimate probe records what it read and anything that wants the numbers
+// reads them from here.
+//
+// The point of exposing them is LUT_VER. CrossPoint beta 10 tells a UC8179 from
+// a UC8279 by it; we cannot, because the discriminating values are not
+// documented anywhere verifiable. Two units reporting this record — one of each
+// sibling — settles it. Until then screenType is the tiebreaker, and it is
+// recorded here beside the probe so a disagreement between them is visible
+// rather than inferred.
+struct DisplayProbeRecord {
+  bool valid = false;         // false until applyXteinkDisplayController() has run
+  uint8_t ver[5] = {0};       // reserved 0x00, CHIP_VER, LUT_VER[23:0] big-endian
+  uint8_t flg = 0;
+  uint32_t lutVer = 0;        // LUT_VER[23:0], unpacked from ver[2..4]
+  bool ultraChip = false;     // what the probe concluded
+  bool screenTypeKnown = false;
+  uint8_t screenType = 0;     // OEM NVS hint; info only, never the primary decision
+};
+
+const DisplayProbeRecord& lastDisplayProbe();
+
 // Convenience: run detectXteinkIsX3(), set BoardConfig::ACTIVE to the matching
 // profile via selectDevice(), and return whether an X3 was detected (so the
 // caller can put FreeInkDisplay in X3 mode with setDisplayX3()). On a
