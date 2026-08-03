@@ -278,33 +278,59 @@ bool applyXteinkDisplayController() {
   // 1/0x0B (UC8179) pairs with the SSD1677 boards, 2/0x0C (UC8279) with UC8253,
   // so promoting by the profile default lands on the right driver either way.
   switch (BoardConfig::ACTIVE.displayController) {
-    case BoardConfig::DisplayController::SSD1677:
-      // WHICH sibling, when the profile default cannot say.
+    case BoardConfig::DisplayController::SSD1677: {
+      // WHICH sibling. Decided from LUT_VER's most significant byte — VER[2] —
+      // which is what CrossPoint beta 10 does.
       //
-      // The probe is ground truth for "is this an UltraChip part" and stays so.
-      // It cannot say WHICH one, and the profile default answers UC8179 every
-      // time — so before beta 9 an X4 Pro carrying a UC8279 had no path to its
-      // own driver at all.
+      // WHERE THESE VALUES COME FROM, because inventing them was refused for
+      // good reason and they are not invented now. They were recovered from
+      // beta 10's own image by disassembly, at IROM 0x4203912c:
       //
-      // screenType is normally info-only here, and for good reason: a full-flash
-      // from another unit overwrites the namespace, so it can name the wrong
-      // panel. But it is only consulted once the probe has ALREADY confirmed an
-      // UltraChip part, and only to pick between two UltraChip siblings. In that
-      // narrow question a possibly-stale hint strictly beats a constant wrong
-      // answer. If it disagrees with reality the panel is no worse off than it
-      // was, and LUT_VER is logged above so a real unit can settle it properly.
+      //     l8ui  a5, a4, 2        ; the byte is VER[2]
+      //     addi  a9, a5, -104     ; (uint8_t)(v - 0x68) <= 1  -> 0x68, 0x69
+      //     ...
+      //     bnei  a5, 2, <UC8179>  ; 0x02 also promotes
+      //     movi  a8, 105          ; 0x69 logs with no caveat
+      //     bnei  a5, 1            ; 0x01 is the recognised UC8179 value
+      //
+      // so: {0x02, 0x68, 0x69} -> UC8279, 0x01 -> UC8179, anything else
+      // unrecognised. Beta 10 marks 0x02 and 0x68 ", reserved" — promoted, but
+      // not the value it expects — and we keep that distinction in the log.
+      // See docs/inkback/reference/crosspoint-x4pro-beta10.md for the full
+      // derivation, including the one instruction that would not decode.
+      const uint8_t lutMsb = static_cast<uint8_t>((lutVer >> 16) & 0xFF);
+      const bool knownUc8279 = (lutMsb == 0x69) || (lutMsb == 0x68) || (lutMsb == 0x02);
+      const bool knownUc8179 = (lutMsb == 0x01);
+
+      if (knownUc8279 || knownUc8179) {
+        const bool uc8279 = knownUc8279;
+        BoardConfig::ACTIVE.displayController =
+            uc8279 ? BoardConfig::DisplayController::UC8279 : BoardConfig::DisplayController::UC8179;
+        if (Serial)
+          Serial.printf("[%lu] [XTDET] promoted SSD1677 -> %s (LUT_VER=%02X%s)\n", millis(),
+                        uc8279 ? "UC8279 800x480" : "UC8179", lutMsb,
+                        (lutMsb == 0x69 || lutMsb == 0x01) ? "" : ", reserved");
+        return true;
+      }
+
+      // Unrecognised LUT_VER. screenType is the LAST resort, not the first:
+      // a full-flash from another unit overwrites that namespace and can name
+      // the wrong panel, so it is consulted only when the panel itself has told
+      // us nothing we recognise. Better than a constant wrong answer, worse
+      // than the hardware's own word.
       if (screenType == 2 || screenType == 0x0C) {
         BoardConfig::ACTIVE.displayController = BoardConfig::DisplayController::UC8279;
         if (Serial)
-          Serial.printf("[%lu] [XTDET] promoted SSD1677 -> UC8279 (screenType=%u, LUT_VER=%06lX)\n", millis(),
-                        screenType, static_cast<unsigned long>(lutVer));
+          Serial.printf("[%lu] [XTDET] promoted SSD1677 -> UC8279 (LUT_VER=%02X unrecognized; screenType=%u)\n",
+                        millis(), lutMsb, screenType);
         return true;
       }
       BoardConfig::ACTIVE.displayController = BoardConfig::DisplayController::UC8179;
       if (Serial)
-        Serial.printf("[%lu] [XTDET] promoted SSD1677 -> UC8179 (LUT_VER=%06lX)\n", millis(),
-                      static_cast<unsigned long>(lutVer));
+        Serial.printf("[%lu] [XTDET] promoted SSD1677 -> UC8179 (LUT_VER=%02X, unrecognized -> UC8179 default)\n",
+                      millis(), lutMsb);
       return true;
+    }
     case BoardConfig::DisplayController::UC8253:
       BoardConfig::ACTIVE.displayController = BoardConfig::DisplayController::UC8279;
       if (Serial) Serial.printf("[%lu] [XTDET] promoted UC8253 -> UC8279\n", millis());
