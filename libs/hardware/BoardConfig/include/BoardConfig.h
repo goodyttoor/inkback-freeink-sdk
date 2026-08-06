@@ -16,7 +16,8 @@
 // selectDevice); ACTIVE defaults to a compile-time default until then.
 
 #include <Arduino.h>
-#include <driver/gpio.h>  // gpio_hold_dis in releaseSdRail()
+#include <driver/gpio.h>   // gpio_hold_dis in releaseSdRail()
+#include <esp_rom_sys.h>  // esp_rom_printf in holdPowerRails()
 
 // ============================================================================
 // Build composition — devices x capabilities
@@ -100,14 +101,25 @@
 //   * UC8279d — X3 (792x528), replaces the UC8253. Runs pure OTP waveforms.
 //   * UC8179  — X4 / X4 Pro (800x480), replaces the SSD1677. Needs an explicit
 //     PLL/booster/VCOM bring-up.
-// Which controller a given unit runs is resolved at boot (OEM hw_calib/screenType
-// in NVS first, then a display-bus probe) and the matching driver is selected
-// before display begin(). Link each driver wherever a batch might carry it.
-// X4 Pro too, not only X3. CrossPoint beta 9 documents a UC8279 at 800x480 on
-// X4 Pro batches, discriminated from the UC8179 by LUT_VER. Linking it only for
-// X3 meant an X4 Pro carrying that controller had no driver to select at all —
-// it would fall through to UC8179 or SSD1677 and run the wrong bring-up, which
-// is a panel that never paints rather than an error anyone can read.
+//   * UC8279 (800x480) — a second UltraChip variant of the X4 Pro panel
+//     (LUT_VER 0x02/0x68); its own driver (different PSR/PLL init, 1-byte CDI,
+//     gate offset, inverted AA planes).
+// Which controller a given unit runs is resolved at boot by the display-bus
+// probe (0x70 VER readback; NVS hw_calib/screenType is diagnostics-only) and the
+// matching driver is selected before display begin(). Link each driver wherever
+// a batch might carry it.
+//
+// X3 ONLY, which is upstream's line and the correct one AFTER this merge.
+//
+// This fork previously linked the X3 UC8279 driver for X4 Pro as well, because
+// an X4 Pro carrying that controller otherwise had no driver at all. Upstream
+// has since added a PURPOSE-BUILT Uc8279X4Driver (800x480, its own init and
+// external-LUT AA path, from the vendor R&D doc) guarded by
+// FREEINK_DRIVER_UC8279_X4, which is 1 for X4/X4 Pro.
+//
+// Re-adding X4PRO here would be actively harmful now: FreeInkDisplay checks the
+// X3 driver BEFORE the X4 one, so linking both makes the X3 driver win and the
+// purpose-built X4 driver never run.
 #if FREEINK_DEVICE_X3 || FREEINK_DEVICE_X4PRO
 #define FREEINK_DRIVER_UC8279 1
 #else
@@ -115,8 +127,10 @@
 #endif
 #if FREEINK_DEVICE_X4 || FREEINK_DEVICE_X4PRO
 #define FREEINK_DRIVER_UC8179 1
+#define FREEINK_DRIVER_UC8279_X4 1
 #else
 #define FREEINK_DRIVER_UC8179 0
+#define FREEINK_DRIVER_UC8279_X4 0
 #endif
 // M5 PaperColor has two interchangeable display backends: the fast hand-rolled
 // ED2208 driver (default), or M5's official M5GFX/M5Unified path (opt in with
@@ -343,12 +357,13 @@ enum class InputStyle : uint8_t {
 // Panel controller silicon. Drivers are selected from this at begin().
 // LgfxEpd = a raw-parallel EPD with no on-glass controller, driven via LovyanGFX
 // (e.g. ED047TC1 on LilyGo T5 S3).
-// UC8179 is the UltraChip sibling that newer X4 / X4 Pro batches ship in place
-// of the SSD1677 (as UC8279 replaces UC8253 on the X3). Same UC81xx KW command
-// family, but its own driver — the UC8179 needs an explicit PLL/booster/VCOM
-// bring-up. Which one a unit carries is resolved at boot: the OEM factory value
-// in NVS (hw_calib/screenType) first, then a display-bus probe (0x70 VER / 0x71
-// FLG read, which SSD1677 lacks). See XteinkDetect::applyXteinkDisplayController.
+// UC8179 and UC8279 are the UltraChip siblings that newer batches ship in place
+// of the original controller (UC8179/UC8279 for the X4 family's SSD1677, UC8279d
+// for the X3's UC8253). Same UC81xx KW command family, separate drivers. Which
+// one a unit carries is resolved at boot by the display-bus probe (0x70 VER /
+// 0x71 FLG read, which SSD1677 lacks; VER byte2 LUT_VER tells UC8179 from
+// UC8279). NVS hw_calib/screenType is read for diagnostics only. See
+// XteinkDetect::applyXteinkDisplayController.
 enum class DisplayController : uint8_t { SSD1677, UC8253, ED2208, LgfxEpd, IT8951, UC8279, UC8179 };
 
 // Optional capacitive touch controller.
@@ -605,6 +620,10 @@ struct BoardProfile {
   // Power-rail latch pins (see PowerConfig). Defaulted so existing profiles
   // need no change; a board with a latch sets it.
   PowerConfig power = {};
+  // Panel-controller variant byte, filled in at boot by the display probe when it
+  // matters (UC8279 800x480: VER byte2 LUT_VER, 0x02 vs 0x68 — selects which AA
+  // waveform table the driver uploads). 0 = not probed / not applicable.
+  uint8_t displayControllerVariant = 0;
 };
 
 constexpr TouchConfig NO_TOUCH = {TouchController::None,
@@ -1327,7 +1346,9 @@ inline void holdPowerRails() {
     if (latchConflictsWithBus(pin)) {
       // Refuse to drive a bus pin as a latch — see latchConflictsWithBus().
 #if defined(ENABLE_SERIAL_LOG)
-      if (Serial) Serial.printf("[BOARD] power latch pin %d collides with a display/SD bus pin; skipping\n", pin);
+      // esp_rom_printf, not Serial: this runs first thing in setup(), before
+      // USB CDC enumerates, and consumers deprecate Serial.printf in headers.
+      esp_rom_printf("[BOARD] power latch pin %d collides with a display/SD bus pin; skipping\n", pin);
 #endif
       continue;
     }
