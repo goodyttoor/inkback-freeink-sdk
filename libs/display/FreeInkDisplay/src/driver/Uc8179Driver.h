@@ -70,6 +70,10 @@ class Uc8179Driver : public PanelDriver {
 
   void requestResync(uint8_t settlePasses) override;
   void skipInitialResync() override;
+  // Inverted (dark-background) content: fast refreshes rewrite the OLD plane
+  // as the complement of the target so every pixel is re-driven toward its
+  // target each update. See displayStart().
+  void setBackgroundHint(bool darkBackground) override { _darkBackground = darkBackground; }
 
   // --- 4-level grayscale (anti-aliasing) ---
   // Two full 1bpp planes encode 4 levels: LSB -> DTM 0x10 ("old"), MSB -> DTM
@@ -88,7 +92,7 @@ class Uc8179Driver : public PanelDriver {
   // (sendPlaneFlipped, as the UC8279 sibling does), padded with white to the
   // addressed gate count. Mirror-X is done in hardware via the PSR SHL bit. Used
   // for both the NEW plane (0x13) and the OLD-plane sync (0x10).
-  void streamPlane(EpdBus& bus, uint8_t ramCmd, const uint8_t* fb);
+  void streamPlane(EpdBus& bus, uint8_t ramCmd, const uint8_t* fb, bool invert = false);
 
   const Uc8179Config& _cfg;
 
@@ -99,6 +103,7 @@ class Uc8179Driver : public PanelDriver {
   uint32_t _bufferSize;
 
   bool _isScreenOn = false;
+  bool _darkBackground = false;
   // Force the first refresh after begin() to a full flash, so a partial update
   // never runs against an unknown on-screen state (e.g. a retained boot image).
   bool _needFullClear = true;
@@ -106,6 +111,12 @@ class Uc8179Driver : public PanelDriver {
   // differential partial has a real baseline to diff against (no ghosting).
   // Cleared after grayscale (which overwrites the planes) so the next B/W is full.
   bool _oldPlaneValid = false;
+  // Set after every grayscale (AA) refresh. The AA overlay leaves gray edge charge
+  // the plain B/W fast diff can't scrub (the B/W baseline records those pixels as
+  // white), so it accumulates under rapid page turns → garble (slow turns settle).
+  // Consumed by the next B/W displayStart to re-drive every pixel to its target
+  // (DTM1 = ~newframe) with a cheap DU — no GC flash — scrubbing the residue.
+  bool _redriveAfterGray = false;
   // AA CDI select: the first grayscale refresh after init sends the border-driving
   // CDI (0x29); later ones the border-holding CDI (0xA9), per the vendor reference.
   bool _grayRefreshedOnce = false;
