@@ -119,6 +119,24 @@ class PanelDriver {
   // True when this controller accepts SSD1677 absolute selector planes with
   // the factory-quality LUT. This is a runtime capability because one firmware
   // image may include several drivers and select the controller during boot.
+  //
+  // CARRIED DELIBERATELY AFTER UPSTREAM REVERTED IT. Upstream added this
+  // (211d4f4) and reverted it a day later (5dd02bc) with no stated reason, while
+  // the firmware side that consumes it — fix-x4-pro-sleep-covers, "Add runtime
+  // check for factory grayscale support" — still pins the pre-revert SDK. That
+  // reads as backing the SDK out until the pair could land together, not as a
+  // correctness problem.
+  //
+  // This fork needs it now: the X4 Pro ships in SSD1677, UC8179 and UC8279
+  // batches, and only the SSD1677 one honours the factory LUT. Without the
+  // query every batch is fed factory selector planes and the other two render
+  // sleep covers wrong — the bug upstream's RC2 notes describe as "sleep covers
+  // not generating on certain x4pro display variants".
+  //
+  // Safe to carry because the default is FALSE: every driver except
+  // Ssd1677Driver keeps exactly the behaviour it had before.
+  //
+  // If upstream re-lands its own version, drop this and take theirs.
   virtual bool supportsFactoryGrayscale() const { return false; }
   // True when displayGrayscaleBase() DEFERS the base activation so the gray
   // planes join it in a single waveform (Paper Mono). Hosts should then route the
