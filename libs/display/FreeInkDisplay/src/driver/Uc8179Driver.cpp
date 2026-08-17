@@ -234,6 +234,21 @@ void Uc8179Driver::displayGrayscaleBase(EpdBus& bus, const uint8_t* fb, RefreshM
 // reversal. SHL in PSR handles the horizontal panel direction for FreeInk's
 // framebuffer convention. White padding fills the non-visible gates.
 void Uc8179Driver::streamPlane(EpdBus& bus, uint8_t ramCmd, const uint8_t* fb, bool invert) {
+#if defined(INKBACK_RENDER_TRACE)
+  // PLANE TRACE. Counts the ink in the bytes actually handed to the controller,
+  // at the moment they are handed over. The host-side render trace samples the
+  // framebuffer after render() returns, which cannot distinguish "a full frame
+  // was sent and the panel ignored it" from "an empty frame was sent and the
+  // buffer was filled afterwards". This can.
+  {
+    uint32_t ink = 0;
+    const uint32_t bytes = static_cast<uint32_t>(_h) * _wb;
+    for (uint32_t i = 0; i < bytes; i++) ink += __builtin_popcount(static_cast<uint8_t>(~fb[i]));
+    Serial.printf("[%lu]   8179_PLANE cmd=0x%02X invert=%d ink=%lu/%lu (%lu.%02lu%%)\n", millis(), ramCmd, invert ? 1 : 0,
+                  (unsigned long)ink, (unsigned long)(bytes * 8), (unsigned long)(ink * 100 / (bytes * 8)),
+                  (unsigned long)((ink * 10000 / (bytes * 8)) % 100));
+  }
+#endif
   if (invert) {
     bus.sendPlaneFlippedInverted(ramCmd, fb, _h, _wb);
   } else {
@@ -395,6 +410,17 @@ bool Uc8179Driver::displayStart(EpdBus& bus, const uint8_t* fb, const uint8_t* p
   // display() and use stock's non-flashing XTF_PRE_BW_MID transition instead.
   const bool scrub = (mode == RefreshMode::Half);
   const bool fast = (mode == RefreshMode::Fast) && !scrub && !_needFullClear && _oldPlaneValid;
+
+#if defined(INKBACK_RENDER_TRACE)
+  // WAVEFORM TRACE. `fast` decides whether the panel gets the differential DU
+  // partial or the full OTP GC pass, and the difference is invisible from the
+  // host — both return void and both take a plausible-looking time. Printing the
+  // four inputs alongside the outcome is the only way to tell a deliberate
+  // partial from one that fell through a stale flag.
+  Serial.printf("[%lu]   8179_MODE mode=%s fast=%d needFullClear=%d oldPlaneValid=%d dark=%d\n", millis(),
+                mode == RefreshMode::Full ? "Full" : (mode == RefreshMode::Half ? "Half" : "Fast"), fast ? 1 : 0,
+                _needFullClear ? 1 : 0, _oldPlaneValid ? 1 : 0, _darkBackground ? 1 : 0);
+#endif
 
   // NEW plane (0x13) = new frame.
   streamPlane(bus, CMD_DTM2, fb);
