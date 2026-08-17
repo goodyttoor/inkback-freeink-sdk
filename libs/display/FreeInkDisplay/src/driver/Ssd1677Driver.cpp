@@ -141,9 +141,17 @@ static const Ssd1677Config& ssd1677X4Config() {
 // is a property of the PANEL, not of the controller: it is safe only where
 // CTRL2=0x1C is honoured as a true partial update, and a panel that silently
 // promotes 0x1C to the full waveform gets slower, not faster. The X4 Pro is
-// "same controller and panel class" as the X4, which is an argument for trying
-// it and not evidence that it works — so it gets its own opt-in and its own
-// validation, and nobody inherits an unvalidated shortcut by sharing a define.
+// "same controller and panel class" as the X4 (the same GDEQ0426T82 class — see
+// ssd1677ActiveConfig), which is an argument for trying it and not evidence that
+// it works — so it gets its own opt-in and its own validation, and nobody
+// inherits an unvalidated shortcut by sharing a define.
+//
+// 0x1C skips the per-refresh temperature load and power sequencing, and its
+// artifacts tend to appear only over long sessions and across temperature —
+// which is why "it looked fine once" is not validation.
+//
+// SSD1677-BATCH UNITS ONLY (upstream's note, and it matters here): UC8179 and
+// UC8279 batches select a different driver and never reach this config at all.
 //
 // Measure before enabling: docs/inkback/DEVICE-ARRIVAL.md, "Refresh timing".
 #ifdef FREEINK_X4PRO_FAST_DU_SHORTCUT
@@ -733,8 +741,8 @@ static const Ssd1677Config& ssd1677ActiveConfig() {
     case BoardConfig::Board::Sticky: return ssd1677StickyConfig();
     // X4 Pro runs on the stock X4/GDEQ0426T82 config — same controller and panel
     // class, confirmed painting on hardware. No custom LUT or drive voltages needed.
-    // Layers the fast-DU shortcut only when the build has opted in, exactly as
-    // the X4 does; stock 0xFC parity otherwise.
+    // Layers the fast-DU shortcut only when the build has opted in
+    // (ssd1677X4ProConfig), exactly as the X4 does; stock 0xFC parity otherwise.
 #ifdef FREEINK_X4PRO_FAST_DU_SHORTCUT
     case BoardConfig::Board::XteinkX4Pro: return ssd1677X4ProConfig();
 #else
