@@ -245,6 +245,110 @@ void Uc8179Driver::streamPlane(EpdBus& bus, uint8_t ramCmd, const uint8_t* fb, b
   for (uint16_t y = _h; y < _tresH; y++) bus.data(whiteRow, wb);
 }
 
+// Window rows only, bottom-to-top to match streamPlane's sendPlaneFlipped, and
+// with NO _tresH padding: in partial mode the controller wants exactly the
+// window's bytes.
+void Uc8179Driver::streamPlaneWindow(EpdBus& bus, const uint8_t ramCmd, const uint8_t* fb, const uint16_t x,
+                                     const uint16_t y, const uint16_t w, const uint16_t h) {
+  const uint16_t xb = static_cast<uint16_t>(x / 8);
+  const uint16_t wb = static_cast<uint16_t>(w / 8);
+  uint8_t row[128];
+  const uint16_t take = wb <= sizeof(row) ? wb : sizeof(row);
+  bus.cmd(ramCmd);
+  bus.beginTxn();
+  // BOTTOM-TO-TOP. streamPlane uses sendPlaneFlipped, so panel row 0 is
+  // framebuffer row _h-1; a window streamed top-down lands mirrored.
+  for (int r = static_cast<int>(y) + static_cast<int>(h) - 1; r >= static_cast<int>(y); r--) {
+    const uint32_t offset = static_cast<uint32_t>(r) * _wb + xb;
+    memcpy(row, fb + offset, take);
+    bus.rawWriteBytes(row, take);
+  }
+  bus.endTxn();
+}
+
+void Uc8179Driver::displayWindow(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, const uint16_t x,
+                                 const uint16_t y, const uint16_t w, const uint16_t h, const bool turnOff) {
+  // EVERY REFUSAL FALLS BACK TO A FULL PAINT rather than returning. A window
+  // this driver cannot honour must still put `fb` on the panel — the caller has
+  // already committed to showing that frame, and a silent no-op would leave the
+  // display stale. supportsWindowedDisplay() is what tells callers whether the
+  // saving is real; correctness never depends on it.
+  const bool aligned = (x % 8 == 0) && (w % 8 == 0);
+  const bool inBounds = fb != nullptr && w > 0 && h > 0 && x + w <= _w && y + h <= _h;
+  // The partial waveform is differential: it needs the PREVIOUS frame in the OLD
+  // plane, exactly as the Fast path does. Without it, KW never fires and the old
+  // content is never erased — the ghosting failure documented in displayStart().
+  const bool partialUsable = _oldPlaneValid && !_needFullClear && !_absoluteGrayPlanes;
+  if (!aligned || !inBounds || !partialUsable) {
+    display(bus, fb, prev, RefreshMode::Fast, turnOff);
+    return;
+  }
+
+  // PTL's vertical range is in PANEL rows, and the panel is scanned flipped, so
+  // framebuffer rows [y, y+h) are panel rows [_h-(y+h), _h-y).
+  const uint16_t panelYStart = static_cast<uint16_t>(_h - (y + h));
+  const uint16_t panelYEnd = static_cast<uint16_t>(_h - y - 1);
+  const uint16_t xEnd = static_cast<uint16_t>(x + w - 1);
+
+  bus.waitBusy(" 8179_win_ready");
+  bus.cmd(CMD_PARTIAL_IN);
+  // Same 9-byte layout the grayscale precondition uses: HRST, HRED, VRST, VRED,
+  // PT_SCAN. The horizontal ends are byte-quantised (| 0x07) because the
+  // controller addresses columns in bytes.
+  const uint8_t window[9] = {static_cast<uint8_t>(x >> 8),
+                             static_cast<uint8_t>(x & 0xF8),
+                             static_cast<uint8_t>(xEnd >> 8),
+                             static_cast<uint8_t>(xEnd | 0x07),
+                             static_cast<uint8_t>(panelYStart >> 8),
+                             static_cast<uint8_t>(panelYStart),
+                             static_cast<uint8_t>(panelYEnd >> 8),
+                             static_cast<uint8_t>(panelYEnd),
+                             0x01};
+  bus.cmdData(CMD_PARTIAL_WINDOW, window, sizeof(window));
+
+  // ONLY THE NEW PLANE IS SENT. The OLD plane (0x10) is not a host buffer — it
+  // lives in controller RAM, and displayFinish() already left it holding the
+  // previously displayed frame. That is exactly what the differential waveform
+  // needs, so re-sending it would be redundant work over SPI and, worse, would
+  // have to be reconstructed from a copy this driver does not keep.
+  streamPlaneWindow(bus, CMD_DTM2, fb, x, y, w, h);
+
+  bus.cmd(CMD_TSSET);
+  bus.data(_cfg.tssetFast);
+  bus.cmd(CMD_PANEL_SETTING);
+  bus.data(static_cast<uint8_t>(_cfg.psr0 & 0xDF));  // REG cleared -> OTP waveform, as the Fast path
+  bus.data(_cfg.psr1);
+  bus.cmd(CMD_PFS);
+  bus.data(_cfg.pfs);
+  bus.cmd(CMD_GATE_SCAN);
+  bus.data(_cfg.gateScan);
+
+  if (!_isScreenOn) {
+    bus.cmd(CMD_POWER_ON);
+    bus.waitBusy(" 8179_win_PON");
+    _isScreenOn = true;
+  }
+
+  bus.cmd(CMD_DISPLAY_REFRESH);
+  bus.waitRefreshComplete(" 8179_win_DRF");
+
+  // Sync the OLD plane for the window BEFORE leaving partial mode, mirroring
+  // what displayFinish() does for the full frame. The window is still set, so
+  // this writes into exactly the region that just changed and the next partial
+  // diffs against the right content. Skipping it is the ghosting bug
+  // displayStart() documents, scoped to the rectangle.
+  streamPlaneWindow(bus, CMD_DTM1, fb, x, y, w, h);
+  bus.cmd(CMD_PARTIAL_OUT);
+
+  // Restore the idle border, as displayFinish() does after a full refresh.
+  bus.cmd(CMD_VCOM_DATA_INTERVAL);
+  bus.data(_cfg.cdiIdle);
+  bus.data(CDI_INTERVAL);
+
+  _oldPlaneValid = true;
+  if (turnOff) deepSleep(bus);
+}
+
 void Uc8179Driver::streamPlaneXor(EpdBus& bus, uint8_t ramCmd, const uint8_t* lhs, const uint8_t* rhs) {
   uint8_t row[128];
   const uint16_t wb = _wb <= sizeof(row) ? _wb : sizeof(row);

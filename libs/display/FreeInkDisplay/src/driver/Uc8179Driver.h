@@ -89,6 +89,33 @@ class Uc8179Driver : public PanelDriver {
   void copyGrayscaleLsb(EpdBus& bus, const uint8_t* lsb) override;
   void copyGrayscaleMsb(EpdBus& bus, const uint8_t* msb) override;
   void displayGray(EpdBus& bus, const uint8_t* fb, bool turnOff, const unsigned char* lut, bool factoryMode) override;
+
+  // WINDOWED REFRESH — OPT-IN, and UNPROVEN ON HARDWARE at the time of writing.
+  //
+  // UC8179 has the command for it: PTL (0x90) takes a rectangle, and this driver
+  // already sends it — but always with a full-panel window, from the grayscale
+  // precondition path. The datasheet says a sub-rectangle is legal and community
+  // reports put UC8179 partial refresh near 0.3 s, so the saving looks real.
+  //
+  // "Looks real" is not "measured on this panel", which is why this is behind
+  // -DFREEINK_UC8179_WINDOWED=1 and OFF by default. supportsWindowedDisplay()
+  // answers the flag, not the aspiration: the base class comment records that
+  // this project has already once logged "24% of panel" while UC8179 repainted
+  // all of it, and a silent full repaint reported as a window is worse than no
+  // window at all.
+  //
+  // Enable, measure the BUSY-low duration for a small rectangle against a full
+  // frame, and only then decide the flag's default. See
+  // docs/inkback/DEVICE-ARRIVAL.md, "Refresh timing".
+  void displayWindow(EpdBus& bus, const uint8_t* fb, const uint8_t* prev, uint16_t x, uint16_t y, uint16_t w,
+                     uint16_t h, bool turnOff) override;
+  bool supportsWindowedDisplay() const override {
+#if defined(FREEINK_UC8179_WINDOWED) && FREEINK_UC8179_WINDOWED
+    return true;
+#else
+    return false;
+#endif
+  }
   void cleanupGrayscaleBuffers(EpdBus& bus, const uint8_t* bw) override;
 
  private:
@@ -97,6 +124,11 @@ class Uc8179Driver : public PanelDriver {
   // SHL for horizontal panel direction, then pad to the addressed gate count.
   // Used for both NEW plane (0x13) and OLD-plane sync (0x10).
   void streamPlane(EpdBus& bus, uint8_t ramCmd, const uint8_t* fb, bool invert = false);
+  // The windowed counterpart: streams ONLY the rectangle's bytes, bottom-to-top
+  // like streamPlane, and with no _tresH white padding — in partial mode the
+  // controller expects exactly the window's worth of data and nothing else.
+  void streamPlaneWindow(EpdBus& bus, uint8_t ramCmd, const uint8_t* fb, uint16_t x, uint16_t y, uint16_t w,
+                         uint16_t h);
   // Stream lhs XOR rhs with the same orientation and white gate padding. Used
   // to translate CrossPoint's MSB transition mask into stock absolute plane1.
   void streamPlaneXor(EpdBus& bus, uint8_t ramCmd, const uint8_t* lhs, const uint8_t* rhs);
