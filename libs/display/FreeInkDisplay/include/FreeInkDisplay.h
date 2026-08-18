@@ -274,6 +274,14 @@ class FreeInkDisplay {
 
   // Access to frame buffer
   uint8_t* getFrameBuffer() const { return frameBuffer; }
+
+  // The buffer holding the frame the panel was last SENT, which in dual-buffer
+  // mode is not getFrameBuffer(): swapBuffers() leaves that pointing at the next
+  // draw target while the displayed frame moves to the secondary. Diagnostics
+  // that want to answer "what went to the glass" must read this one; sampling
+  // getFrameBuffer() after a refresh yields the frame BEFORE last. Single-buffer
+  // has only the one allocation, so both agree there.
+  const uint8_t* getDisplayedFrameBuffer() const { return frameBufferActive ? frameBufferActive : frameBuffer; }
   bool framebufferReady() const { return frameBuffer != nullptr; }
 
   // Copy the just-displayed frame (frameBufferActive) back into the write buffer.
